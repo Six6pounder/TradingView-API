@@ -222,6 +222,7 @@ module.exports = class Client {
    * @prop {boolean} [DEBUG] Enable debug mode
    * @prop {'data' | 'prodata' | 'widgetdata' | 'history-data'} [server] Server type
    * @prop {string} [location] Auth page location (For france: https://fr.tradingview.com/)
+   * @prop {Object<string, string>} [headers] Custom WebSocket headers
    */
 
   /**
@@ -231,16 +232,21 @@ module.exports = class Client {
   constructor(clientOptions = {}) {
     if (clientOptions.DEBUG) global.TW_DEBUG = clientOptions.DEBUG;
 
-    const server = clientOptions.server || "data";
-    this.#ws = new WebSocket(
-      `wss://${server}.tradingview.com/socket.io/websocket?type=chart`,
-      {
-        origin: "https://www.tradingview.com",
-        headers: {
-          Origin: "https://www.tradingview.com",
-        },
-      }
-    );
+    const server = clientOptions.server || 'data';
+    const defaultHeaders = {
+      // eslint-disable-next-line max-len
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      // Bun's ws shim ignores the `origin` option, so the header must be set explicitly
+      Origin: 'https://www.tradingview.com',
+    };
+
+    this.#ws = new WebSocket(`wss://${server}.tradingview.com/socket.io/websocket?from=chart&type=chart`, {
+      origin: 'https://www.tradingview.com',
+      headers: { ...defaultHeaders, ...clientOptions.headers },
+    });
 
     if (clientOptions.token) {
       misc
