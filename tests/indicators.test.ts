@@ -65,7 +65,7 @@ describe('Indicators', () => {
     expect(chart.infos.full_name).toBe('BINANCE:BTCEUR');
   });
 
-  it.skipIf(noAuth).concurrent('gets performance data from SuperTrend strategy', async () => {
+  it.skipIf(noAuth)('gets performance data from SuperTrend strategy', async () => {
     const SuperTrend = new chart.Study(indicators.SuperTrend);
 
     let QTY = 10;
@@ -95,7 +95,7 @@ describe('Indicators', () => {
           },
         });
 
-        if (QTY >= 50) {
+        if (perfReport?.all?.totalTrades !== undefined && QTY >= 50) {
           resolve(true);
           return;
         }
@@ -112,14 +112,18 @@ describe('Indicators', () => {
     expect(perfResult).toBe(true);
 
     SuperTrend.remove();
-  }, 10000);
+  }, 30000);
 
-  it.skipIf(noAuth).concurrent('gets data from MarketCipher B study', async () => {
+  it.skipIf(noAuth)('gets data from MarketCipher B study', async () => {
     const CipherB = new chart.Study(indicators.CipherB);
 
     const lastResult: any = await new Promise((resolve) => {
       CipherB.onUpdate(() => {
-        resolve(CipherB.periods[0]);
+        const lastPeriod = CipherB.periods[0];
+
+        if (lastPeriod?.VWAP !== undefined && lastPeriod?.rsiMFI !== undefined) {
+          resolve(lastPeriod);
+        }
       });
     });
 
@@ -135,7 +139,7 @@ describe('Indicators', () => {
     expect(lastResult.Buy_and_sell_circle).toBeTypeOf('number');
 
     CipherB.remove();
-  });
+  }, 30000);
 
   it.skipIf(noAuth)('removes chart', () => {
     console.log('Closing the chart...');

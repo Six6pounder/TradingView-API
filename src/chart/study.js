@@ -349,9 +349,19 @@ const studyConstructor = (chartSession) =>
             };
 
             if (parsed.dataCompressed) {
-              updateStrategyReport(
-                (await parseCompressed(parsed.dataCompressed)).report
-              );
+              try {
+                const compressedData = await parseCompressed(
+                  parsed.dataCompressed
+                );
+                if (compressedData && compressedData.report) {
+                  updateStrategyReport(compressedData.report);
+                }
+              } catch (error) {
+                this.#handleError(
+                  "Unable to parse compressed strategy report:",
+                  error.message || error
+                );
+              }
             }
 
             if (parsed.data && parsed.data.report)
