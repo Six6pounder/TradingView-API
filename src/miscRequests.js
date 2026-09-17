@@ -6,6 +6,15 @@ const { genAuthCookies } = require('./utils');
 
 const validateStatus = (status) => status < 500;
 
+// Endpoint non documentati dell'editor Pine: possono cambiare senza preavviso
+const PINE_FACADE_URL = 'https://pine-facade.tradingview.com/pine-facade';
+const PINE_TRANSLATE_URL = `${PINE_FACADE_URL}/translate_light`;
+const PINE_GET_URL = `${PINE_FACADE_URL}/get`;
+const PINE_SAVE_NEW_URL = `${PINE_FACADE_URL}/save/new/`;
+const PINE_SAVE_NEXT_URL = `${PINE_FACADE_URL}/save/next`;
+const PINE_RENAME_URL = `${PINE_FACADE_URL}/rename`;
+const PINE_DELETE_URL = `${PINE_FACADE_URL}/delete`;
+
 const indicators = ['Recommend.Other', 'Recommend.All', 'Recommend.MA'];
 const builtInIndicList = [];
 
@@ -44,6 +53,48 @@ async function fetchScanData(tickers = [], columns = []) {
  *  '1M': Period
  * }} Periods
  */
+
+function pineHeaders(session, signature) {
+  return {
+    cookie: genAuthCookies(session, signature),
+    origin: 'https://www.tradingview.com',
+    referer: 'https://www.tradingview.com/',
+    'content-type': 'application/x-www-form-urlencoded',
+  };
+}
+
+/** Accetta sia 'USER;abc' sia 'USER%3Babc' e restituisce la forma decodificata */
+function normalizePineId(id) {
+  if (!id || typeof id !== 'string') throw new Error('Missing pine script ID');
+  return id.includes('%') ? decodeURIComponent(id) : id;
+}
+
+/** Messaggio d'errore di pine-facade, senza mai includere le intestazioni */
+function pineFacadeError(action, status, data) {
+  if (data && typeof data === 'object') {
+    const msg = data.message || data.reason || JSON.stringify(data).slice(0, 300);
+    return new Error(`Pine script ${action} failed (HTTP ${status}): ${msg}`);
+  }
+  return new Error(`Pine script ${action} failed (HTTP ${status})`);
+}
+
+function formatPineErrors(errors) {
+  return errors.map((e) => (
+    e.start ? `line ${e.start.line}:${e.start.column}: ${e.message}` : (e.message || String(e))
+  )).join('; ');
+}
+
+async function resolveUsername(session, signature, options) {
+  if (options.username) return options.username;
+  const { username } = await module.exports.getUser(session, signature);
+  if (!username) throw new Error('Unable to get the username from the session');
+  return username;
+}
+
+async function findPrivateScript(id, session, signature) {
+  const list = await module.exports.getPrivateIndicators(session, signature);
+  return list.find((s) => s.id === id);
+}
 
 module.exports = {
   /**
@@ -513,6 +564,289 @@ module.exports = {
         );
       },
     }));
+  },
+
+  /**
+   * @typedef {Object} PineMessage
+   * @prop {string} message Message text
+   * @prop {{ line: number, column: number }} [start] Start position
+   * @prop {{ line: number, column: number }} [end] End position
+   */
+
+  /**
+   * @typedef {Object} PineCompileResult
+   * @prop {boolean} success True if the script compiles without errors
+   * @prop {PineMessage[]} errors Compilation errors
+   * @prop {PineMessage[]} warnings Compilation warnings
+   * @prop {Object} [raw] Full TradingView response, for debugging
+   */
+
+  /**
+   * Compile a Pine script without saving it
+   * @function translatePineScript
+   * @param {string} source Full Pine script source
+   * @param {string} session User 'sessionid' cookie
+   * @param {string} [signature] User 'sessionid_sign' cookie
+   * @param {Object} [options]
+   * @param {string} [options.username] Username (avoids a getUser request)
+   * @returns {Promise<PineCompileResult>} Compilation result
+   */
+  async translatePineScript(source, session, signature = '', options = {}) {
+    const username = await resolveUsername(session, signature, options);
+
+    const { data, status } = await axios.post(
+      PINE_TRANSLATE_URL,
+      new URLSearchParams({ source }).toString(),
+      {
+        params: { user_name: username, v: 3 },
+        headers: pineHeaders(session, signature),
+        validateStatus,
+      },
+    );
+
+    if (!data || typeof data !== 'object') throw pineFacadeError('compilation', status, data);
+
+    // TradingView risponde success: true anche con errori di compilazione
+    const result = data.result || {};
+    const errors = [
+      ...(result.errors2 || result.errors || []),
+      ...((data.reason2 && data.reason2.errors) || []),
+    ];
+    if (!data.success && !errors.length) {
+      errors.push({ message: data.reason || data.message || `HTTP ${status}` });
+    }
+
+    return {
+      success: !!data.success && !errors.length,
+      errors,
+      warnings: result.warnings2 || result.warnings || [],
+      raw: data,
+    };
+  },
+
+  /**
+   * @typedef {Object} PineScriptSource
+   * @prop {string} id Script ID (Like: USER;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+   * @prop {string} name Script name in the account
+   * @prop {string} title Title declared in the source
+   * @prop {string} version Script version
+   * @prop {'study' | 'strategy'} type Script type
+   * @prop {string} source Full Pine source
+   * @prop {Date} created Creation date
+   * @prop {Date} updated Last update date
+   */
+
+  /**
+   * Get the source of a private Pine script
+   * @function getPineScriptSource
+   * @param {string} id Script ID (Like: USER;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+   * @param {'last' | string} [version] Wanted version
+   * @param {string} session User 'sessionid' cookie
+   * @param {string} [signature] User 'sessionid_sign' cookie
+   * @returns {Promise<PineScriptSource>} Script source
+   */
+  async getPineScriptSource(id, version = 'last', session = '', signature = '') {
+    const pineId = normalizePineId(id);
+
+    const { data, status } = await axios.get(
+      `${PINE_GET_URL}/${encodeURIComponent(pineId)}/${encodeURIComponent(version)}`,
+      {
+        headers: pineHeaders(session, signature),
+        validateStatus,
+      },
+    );
+
+    if (status !== 200 || !data || typeof data.source !== 'string') {
+      throw pineFacadeError('read', status, data);
+    }
+
+    return {
+      id: pineId,
+      name: data.scriptName,
+      title: data.scriptTitle,
+      version: data.version,
+      type: (data.extra && data.extra.kind) ? data.extra.kind : 'study',
+      source: data.source,
+      created: new Date(data.created),
+      updated: new Date(data.updated),
+    };
+  },
+
+  /**
+   * @typedef {Object} SavedPineScript
+   * @prop {string} id Script ID (Like: USER;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+   * @prop {string} name Script name in the account
+   * @prop {string} version Script version
+   */
+
+  /**
+   * Create a new private Pine script in the user account.
+   * The source is compiled first and nothing is saved if it has errors.
+   * @function createPineScript
+   * @param {string} source Full Pine script source
+   * @param {string} name Script name (must not already exist)
+   * @param {string} session User 'sessionid' cookie
+   * @param {string} [signature] User 'sessionid_sign' cookie
+   * @param {Object} [options]
+   * @param {string} [options.username] Username (avoids a getUser request)
+   * @param {boolean} [options.skipCompile] Skip the compilation check
+   * @returns {Promise<SavedPineScript>} Created script
+   */
+  async createPineScript(source, name, session, signature = '', options = {}) {
+    if (!name) throw new Error('Missing pine script name');
+    const username = await resolveUsername(session, signature, options);
+
+    // Con codice non compilabile TradingView salva comunque lo script
+    if (!options.skipCompile) {
+      const compiled = await module.exports.translatePineScript(
+        source,
+        session,
+        signature,
+        { username },
+      );
+      if (!compiled.success) {
+        throw new Error(`Pine script compilation failed: ${formatPineErrors(compiled.errors)}`);
+      }
+    }
+
+    const { data, status } = await axios.post(
+      PINE_SAVE_NEW_URL,
+      new URLSearchParams({ source }).toString(),
+      {
+        params: { name, user_name: username, allow_use_existing_draft: false },
+        headers: pineHeaders(session, signature),
+        validateStatus,
+      },
+    );
+
+    const result = (data && data.result) || {};
+    const id = result.scriptIdPart || (result.metaInfo && result.metaInfo.scriptIdPart);
+    if (status !== 200 || !id) throw pineFacadeError('creation', status, data);
+
+    const saved = await findPrivateScript(id, session, signature);
+    if (!saved) throw new Error(`Pine script ${id} was saved but is not in the private list`);
+
+    return { id, name: saved.name, version: saved.version };
+  },
+
+  /**
+   * Update the source of an existing private Pine script.
+   * The source is compiled first and nothing is saved if it has errors.
+   * @function updatePineScript
+   * @param {string} id Script ID (Like: USER;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+   * @param {string} source New full Pine script source
+   * @param {string} session User 'sessionid' cookie
+   * @param {string} [signature] User 'sessionid_sign' cookie
+   * @param {Object} [options]
+   * @param {string} [options.name] New script name (default: current name)
+   * @param {string} [options.username] Username (avoids a getUser request)
+   * @param {boolean} [options.skipCompile] Skip the compilation check
+   * @returns {Promise<SavedPineScript>} Updated script
+   */
+  async updatePineScript(id, source, session, signature = '', options = {}) {
+    const pineId = normalizePineId(id);
+    const username = await resolveUsername(session, signature, options);
+
+    const current = await findPrivateScript(pineId, session, signature);
+    if (!current) throw new Error(`Pine script ${pineId} is not in the private list`);
+    const name = options.name || current.name;
+
+    if (!options.skipCompile) {
+      const compiled = await module.exports.translatePineScript(
+        source,
+        session,
+        signature,
+        { username },
+      );
+      if (!compiled.success) {
+        throw new Error(`Pine script compilation failed: ${formatPineErrors(compiled.errors)}`);
+      }
+    }
+
+    const { data, status } = await axios.post(
+      `${PINE_SAVE_NEXT_URL}/${encodeURIComponent(pineId)}`,
+      new URLSearchParams({ source }).toString(),
+      {
+        params: { allow_create_new: false, name, user_name: username },
+        headers: pineHeaders(session, signature),
+        validateStatus,
+      },
+    );
+
+    const result = (data && data.result) || {};
+    const savedId = result.scriptIdPart || (result.metaInfo && result.metaInfo.scriptIdPart);
+    if (status !== 200 || !data.success || savedId !== pineId) {
+      throw pineFacadeError('update', status, data);
+    }
+
+    const saved = await findPrivateScript(pineId, session, signature);
+    if (!saved || saved.name !== name) {
+      throw new Error(`Pine script ${pineId} was updated but the private list does not match`);
+    }
+
+    return { id: pineId, name: saved.name, version: saved.version };
+  },
+
+  /**
+   * Rename a private Pine script without changing its source
+   * @function renamePineScript
+   * @param {string} id Script ID (Like: USER;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+   * @param {string} name New script name
+   * @param {string} session User 'sessionid' cookie
+   * @param {string} [signature] User 'sessionid_sign' cookie
+   * @returns {Promise<SavedPineScript>} Renamed script
+   */
+  async renamePineScript(id, name, session, signature = '') {
+    if (!name) throw new Error('Missing pine script name');
+    const pineId = normalizePineId(id);
+
+    const { data, status } = await axios.post(
+      `${PINE_RENAME_URL}/${encodeURIComponent(pineId)}`,
+      '',
+      {
+        params: { name },
+        headers: pineHeaders(session, signature),
+        validateStatus,
+      },
+    );
+
+    if (status !== 200 || data !== 'ok') throw pineFacadeError('rename', status, data);
+
+    const saved = await findPrivateScript(pineId, session, signature);
+    if (!saved || saved.name !== name) {
+      throw new Error(`Pine script ${pineId} was renamed but the private list does not match`);
+    }
+
+    return { id: pineId, name: saved.name, version: saved.version };
+  },
+
+  /**
+   * Delete a private Pine script from the user account
+   * @function deletePineScript
+   * @param {string} id Script ID (Like: USER;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+   * @param {string} session User 'sessionid' cookie
+   * @param {string} [signature] User 'sessionid_sign' cookie
+   * @returns {Promise<true>} True once the script is no longer in the private list
+   */
+  async deletePineScript(id, session, signature = '') {
+    const pineId = normalizePineId(id);
+
+    const { data, status } = await axios.post(
+      `${PINE_DELETE_URL}/${encodeURIComponent(pineId)}`,
+      '',
+      {
+        headers: pineHeaders(session, signature),
+        validateStatus,
+      },
+    );
+
+    if (status !== 200 || data !== 'ok') throw pineFacadeError('deletion', status, data);
+
+    if (await findPrivateScript(pineId, session, signature)) {
+      throw new Error(`Pine script ${pineId} is still in the private list after deletion`);
+    }
+
+    return true;
   },
 
   /**
