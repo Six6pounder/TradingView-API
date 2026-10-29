@@ -1,44 +1,99 @@
 {
   "name": "@mathieuc/tradingview",
-  "version": "3.5.2",
-  "description": "Tradingview instant stocks API, indicator alerts, trading bot, and more !",
-  "main": "main.js",
+  "version": "4.1.0",
+  "description": "TradingView market data for JavaScript and TypeScript: candles, quotes, indicators and strategies, with a simple data API and full low-level access.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./data": {
+      "types": "./dist/data/index.d.ts",
+      "import": "./dist/data/index.js",
+      "default": "./dist/data/index.js"
+    },
+    "./backtest": {
+      "types": "./dist/backtest/index.d.ts",
+      "import": "./dist/backtest/index.js",
+      "default": "./dist/backtest/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs",
+    "scripts/endurance.mjs",
+    "scripts/probe-account.mjs",
+    "assets",
+    "!assets/readme-film*.webp",
+    "llms.txt",
+    "examples",
+    "scripts/parity.mjs",
+    "bin"
+  ],
+  "sideEffects": false,
   "scripts": {
-    "test": "vitest",
-    "example": "node --env-file=.env",
-    "example:dev": "nodemon --env-file=.env"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:bun": "bun test tests/unit",
+    "test:watch": "vitest",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "smoke": "node scripts/smoke.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build && npm run smoke",
+    "prepack": "npm run build",
+    "probe:endurance": "npm run build && node scripts/endurance.mjs",
+    "probe:parity": "npm run build && node scripts/parity.mjs",
+    "probe:account": "npm run build && node scripts/probe-account.mjs",
+    "test:coverage": "vitest run --coverage"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Mathieu2301/TradingView-API.git"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=20.0.0"
   },
   "keywords": [
-    "tradingwiew",
-    "market",
+    "tradingview",
+    "market-data",
+    "candles",
+    "quotes",
     "stocks",
     "crypto",
     "forex",
+    "backtest",
     "indicator",
-    "bitcoin",
+    "pine",
+    "websocket",
     "api"
   ],
   "author": "Mathieu Colmon",
   "license": "ISC",
   "dependencies": {
-    "axios": "^1.17.0",
-    "jszip": "^3.10.1",
-    "ws": "^7.5.11"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@babel/eslint-parser": "^7.29.7",
-    "@mathieuc/console": "^1.0.1",
-    "dotenv": "^16.6.1",
-    "eslint": "^7.32.0",
-    "eslint-config-airbnb-base": "^14.2.1",
-    "eslint-plugin-import": "^2.32.0",
-    "vitest": "^0.31.4"
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^4.1.12",
+    "eslint": "^9.39.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^4.1.12"
+  },
+  "homepage": "https://github.com/Mathieu2301/TradingView-API#readme",
+  "bugs": {
+    "url": "https://github.com/Mathieu2301/TradingView-API/issues"
+  },
+  "bin": {
+    "tradingview": "bin/tradingview.mjs"
   }
 }
