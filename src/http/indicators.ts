@@ -128,6 +128,16 @@ function parsePlots(styles: Record<string, any>, items: any[]): Record<string, s
 /** Converts a `pine-facade/translate` result into a `PineIndicator`. */
 export function parseIndicatorDefinition(result: any, id: string, version: string): PineIndicator {
   const meta = result.metaInfo;
+  // Recent pine-facade responses put the compiled script in the hidden `text`
+  // input instead of returning `ilTemplate` beside `metaInfo`.
+  const script = [
+    result.ilTemplate,
+    meta.defaults?.inputs?.text,
+    meta.inputs?.find((input: any) => input.id === 'text')?.defval,
+  ].find((value) => typeof value === 'string' && value.length > 0);
+  if (!script) {
+    throw new TradingViewError('PARSE_ERROR', `Indicator ${id} has no compiled Pine script`);
+  }
   return new PineIndicator({
     id: meta.scriptIdPart || id,
     version: meta.pine?.version || version,
@@ -135,7 +145,7 @@ export function parseIndicatorDefinition(result: any, id: string, version: strin
     shortDescription: meta.shortDescription,
     inputs: parseInputs(meta.inputs),
     plots: parsePlots(meta.styles ?? {}, meta.plots ?? []),
-    script: result.ilTemplate,
+    script,
   });
 }
 

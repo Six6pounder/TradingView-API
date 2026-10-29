@@ -89,4 +89,21 @@ describe('parseIndicatorDefinition', () => {
       plot_0: 'MA_line', plot_1: 'MA_line_2', plot_2: 'MA_line_3', plot_3: 'MA_line_colorer',
     });
   });
+
+  it('reads compiled Pine from the hidden text input when ilTemplate is absent', () => {
+    const metaInfo = {
+      scriptIdPart: 'STD;Test', description: 'Test', shortDescription: 'T',
+      pine: { version: '1.0' }, defaults: { inputs: { text: 'compiled-new' } },
+      inputs: [{ id: 'text', name: 'ILScript', defval: 'compiled-new', type: 'text', isHidden: true }],
+      styles: {}, plots: [],
+    };
+    const indicator = parseIndicatorDefinition({ metaInfo }, 'STD;Test', 'last');
+    expect(indicator.toStudyInputs().text).toBe('compiled-new');
+    expect(indicator.inputs).toEqual({});
+
+    const withoutDefaults = { ...metaInfo, defaults: {} };
+    expect(parseIndicatorDefinition({ metaInfo: withoutDefaults }, 'STD;Test', 'last').script).toBe('compiled-new');
+    expect(() => parseIndicatorDefinition({ metaInfo: { ...withoutDefaults, inputs: [] } }, 'STD;Test', 'last'))
+      .toThrow(/no compiled Pine script/);
+  });
 });
